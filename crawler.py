@@ -21,9 +21,16 @@ async def crawl_url(crawler, url, output_dir):
     
     run_config = CrawlerRunConfig(
         cache_mode="bypass",
-        word_count_threshold=10,
+        # Wait for the page to be fully idle and a small extra buffer for JS components
+        wait_for="networkidle",
+        delay_before_return_secs=2, 
+        # Ensure we don't filter out "low value" content which might include code blocks
+        word_count_threshold=0,
         remove_overlay_elements=True,
-        process_iframes=True
+        process_iframes=True,
+        # Capture everything, don't use aggressive pruning
+        excluded_tags=[],
+        exclude_external_links=False
     )
 
     result = await crawler.arun(url, config=run_config)
@@ -33,10 +40,17 @@ async def crawl_url(crawler, url, output_dir):
         safe_name = url.split("//")[-1].replace("/", "_").replace(".", "_").strip("_")
         filepath = os.path.join(output_dir, f"{safe_name}.md")
         
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(result.markdown)
+        # We prefer the full markdown which usually includes code blocks
+        content = result.markdown
         
-        logger.success(f"Saved: {filepath}", tag="CRAWL")
+        # If markdown is too short, something might be wrong
+        if len(content) < 500:
+            logger.warning(f"Extracted content for {url} seems short ({len(content)} chars).", tag="CRAWL")
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(content)
+        
+        logger.success(f"Saved: {filepath} ({len(content)} bytes)", tag="CRAWL")
         return True
     else:
         logger.error(f"Failed {url}: {result.error_message}", tag="CRAWL")
