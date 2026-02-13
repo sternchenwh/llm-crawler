@@ -68,46 +68,45 @@ async def crawl_url(crawler, url, output_dir, inspect_options=None):
         safe_name = url.split("//")[-1].replace("/", "_").replace(".", "_").replace(":", "_").strip("_")
         filepath = os.path.join(output_dir, f"{safe_name}.md")
         
-        # Use result.html which is the raw rendered HTML of the main page
-        soup = BeautifulSoup(result.html, 'lxml')
-        
-        # Build the Markdown
         markdown_content = f"# Documentation for {url}\n\n"
         extracted_any = False
         
-        # Find all iframes that have a srcdoc (TUI components)
-        iframes = soup.find_all('iframe')
-        
-        for index, iframe in enumerate(iframes):
-            src_doc = iframe.get('srcdoc')
-            if not src_doc:
-                continue
-                
-            # Find a title: look for the closest section's h2
-            section = iframe.find_parent('section')
-            title = "Component"
-            if section:
-                h2 = section.find('h2')
-                if h2:
-                    title = h2.get_text(strip=True)
-                elif section.get('id'):
-                    title = section.get('id')
+        # Respect the 'inspect' options from config.json
+        if inspect_options and "iframe" in inspect_options:
+            # Use BeautifulSoup to parse the raw rendered HTML
+            soup = BeautifulSoup(result.html, 'lxml')
+            iframes = soup.find_all('iframe')
             
-            if title == "Component":
-                title = f"Component {index + 1}"
+            for index, iframe in enumerate(iframes):
+                src_doc = iframe.get('srcdoc')
+                if not src_doc:
+                    continue
+                    
+                section = iframe.find_parent('section')
+                title = "Component"
+                if section:
+                    h2 = section.find('h2')
+                    if h2:
+                        title = h2.get_text(strip=True)
+                    elif section.get('id'):
+                        title = section.get('id')
                 
-            # Extract and clean
-            component_code = extract_innermost_component(src_doc)
-            
-            if component_code:
-                markdown_content += f"## {title}\n"
-                markdown_content += "```html\n"
-                markdown_content += component_code
-                markdown_content += "\n```\n\n"
-                extracted_any = True
+                if title == "Component":
+                    title = f"Component {index + 1}"
+                    
+                component_code = extract_innermost_component(src_doc)
+                
+                if component_code:
+                    markdown_content += f"## {title}\n"
+                    markdown_content += "```html\n"
+                    markdown_content += component_code
+                    markdown_content += "\n```\n\n"
+                    extracted_any = True
 
+        # If 'iframe' wasn't requested or failed to extract anything, use standard markdown
         if not extracted_any:
-            logger.warning(f"Python parsing failed to find components for {url}. Saving default markdown.", tag="CRAWL")
+            if inspect_options and "iframe" in inspect_options:
+                logger.warning(f"Iframe inspection was requested but no components found for {url}.", tag="CRAWL")
             markdown_content += result.markdown
 
         with open(filepath, "w", encoding="utf-8") as f:
