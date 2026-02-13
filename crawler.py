@@ -3,6 +3,7 @@ import os
 import json
 import re
 import html
+import shutil
 from bs4 import BeautifulSoup
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
 from crawl4ai.async_logger import AsyncLogger
@@ -20,7 +21,6 @@ def extract_innermost_component(srcdoc_html):
         return ""
     
     # srcdoc often contains HTML-escaped content like &lt;!doctype html&gt;
-    # We unescape it first to get real HTML
     unescaped = html.unescape(srcdoc_html)
     
     soup = BeautifulSoup(unescaped, 'lxml')
@@ -35,18 +35,15 @@ def extract_innermost_component(srcdoc_html):
         return ""
     
     # 3. Drill down through Tailwind UI layout wrappers
-    # These are usually single-child divs with background/padding/mx-auto classes
     current = body
     while len(current.find_all(recursive=False)) == 1 and current.find(recursive=False).name == 'div':
         child = current.find(recursive=False)
         classes = " ".join(child.get('class', [])).lower()
-        # If it looks like a wrapper, dive in
         if any(cls in classes for cls in ['bg-', 'p-', 'mx-auto', 'flex']):
             current = child
         else:
             break
             
-    # Return the inner content which contains the real components (buttons, etc.)
     return current.decode_contents().strip()
 
 async def crawl_url(crawler, url, output_dir, inspect_options=None):
@@ -56,10 +53,10 @@ async def crawl_url(crawler, url, output_dir, inspect_options=None):
     run_config = CrawlerRunConfig(
         cache_mode="bypass",
         wait_until="networkidle",
-        delay_before_return_html=5.0, # Wait for iframes to fully populate
+        delay_before_return_html=5.0,
         word_count_threshold=0,
         remove_overlay_elements=True,
-        process_iframes=False # Don't turn them into text
+        process_iframes=False 
     )
 
     result = await crawler.arun(url, config=run_config)
@@ -71,9 +68,7 @@ async def crawl_url(crawler, url, output_dir, inspect_options=None):
         markdown_content = f"# Documentation for {url}\n\n"
         extracted_any = False
         
-        # Respect the 'inspect' options from config.json
         if inspect_options and "iframe" in inspect_options:
-            # Use BeautifulSoup to parse the raw rendered HTML
             soup = BeautifulSoup(result.html, 'lxml')
             iframes = soup.find_all('iframe')
             
@@ -103,7 +98,6 @@ async def crawl_url(crawler, url, output_dir, inspect_options=None):
                     markdown_content += "\n```\n\n"
                     extracted_any = True
 
-        # If 'iframe' wasn't requested or failed to extract anything, use standard markdown
         if not extracted_any:
             if inspect_options and "iframe" in inspect_options:
                 logger.warning(f"Iframe inspection was requested but no components found for {url}.", tag="CRAWL")
@@ -119,7 +113,13 @@ async def crawl_url(crawler, url, output_dir, inspect_options=None):
         return False
 
 async def main():
-    logger.info(f"{Fore.CYAN}LLM Context Crawler (Python Source Extractor){Style.RESET_ALL}", tag="DEMO")
+    logger.info(f"{Fore.CYAN}LLM Context Crawler (High-Fidelity Extractor){Style.RESET_ALL}", tag="DEMO")
+    
+    # Reset output directory
+    if os.path.exists("output"):
+        logger.info("Cleaning old output directory...", tag="SETUP")
+        shutil.rmtree("output")
+    os.makedirs("output", exist_ok=True)
     
     config_path = "config.json"
     if not os.path.exists(config_path):
@@ -136,15 +136,15 @@ async def main():
 
     async with AsyncWebCrawler(config=browser_config) as crawler:
         logger.info(f"\n{Fore.YELLOW}STEP 1: BROWSER PREPARATION{Style.RESET_ALL}", tag="SETUP")
-        logger.info("A browser window will open. Navigate to Tailwind UI and LOGIN.")
+        logger.info("A browser window will open. Navigate to the target site and login.")
         
         await crawler.arun("https://www.google.com")
         
         print(f"\n{Fore.GREEN}--> ACTION REQUIRED:{Style.RESET_ALL}")
-        print(f"1. Log in to Tailwind UI in the opened browser.")
-        print(f"2. Navigate to the component category.")
+        print(f"1. In the opened browser, log in to your account.")
+        print(f"2. Navigate to the components or documentation page.")
         print(f"3. Press ENTER in this terminal.")
-        input(f"{Fore.CYAN}Press [ENTER] to extract source code using Python BeautifulSoup...{Style.RESET_ALL}")
+        input(f"{Fore.CYAN}Press [ENTER] to start extraction...{Style.RESET_ALL}")
 
         logger.info(f"\n{Fore.YELLOW}STEP 2: EXTRACTION{Style.RESET_ALL}", tag="CRAWL")
         
