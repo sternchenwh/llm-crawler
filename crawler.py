@@ -2,7 +2,6 @@ import asyncio
 import os
 import json
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
-from crawl4ai.browser_profiler import BrowserProfiler
 from crawl4ai.async_logger import AsyncLogger
 from colorama import Fore, Style, init
 
@@ -12,23 +11,17 @@ init()
 # Create a shared logger instance
 logger = AsyncLogger(verbose=True)
 
-# Create a shared BrowserProfiler instance
-profiler = BrowserProfiler(logger=logger)
-
 async def crawl_url(crawler, url, output_dir):
     """Crawl a single URL and save to output_dir"""
     logger.info(f"Crawling {Fore.CYAN}{url}{Style.RESET_ALL}", tag="CRAWL")
     
     run_config = CrawlerRunConfig(
         cache_mode="bypass",
-        # Wait for the page to be fully idle and a small extra buffer for JS components
         wait_for="networkidle",
         delay_before_return_secs=2, 
-        # Ensure we don't filter out "low value" content which might include code blocks
         word_count_threshold=0,
         remove_overlay_elements=True,
         process_iframes=True,
-        # Capture everything, don't use aggressive pruning
         excluded_tags=[],
         exclude_external_links=False
     )
@@ -36,17 +29,11 @@ async def crawl_url(crawler, url, output_dir):
     result = await crawler.arun(url, config=run_config)
 
     if result.success:
-        # Generate filename from URL
         safe_name = url.split("//")[-1].replace("/", "_").replace(".", "_").strip("_")
         filepath = os.path.join(output_dir, f"{safe_name}.md")
         
-        # We prefer the full markdown which usually includes code blocks
         content = result.markdown
         
-        # If markdown is too short, something might be wrong
-        if len(content) < 500:
-            logger.warning(f"Extracted content for {url} seems short ({len(content)} chars).", tag="CRAWL")
-
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
         
@@ -56,8 +43,10 @@ async def crawl_url(crawler, url, output_dir):
         logger.error(f"Failed {url}: {result.error_message}", tag="CRAWL")
         return False
 
-async def process_config(profile_path, config_path):
-    """Read JSON config and process all groups"""
+async def main():
+    logger.info(f"{Fore.CYAN}LLM Context Crawler (Interactive Mode){Style.RESET_ALL}", tag="DEMO")
+    
+    config_path = "config.json"
     if not os.path.exists(config_path):
         logger.error(f"Config file not found: {config_path}")
         return
@@ -65,45 +54,41 @@ async def process_config(profile_path, config_path):
     with open(config_path, 'r') as f:
         config_data = json.load(f)
 
+    # Use a managed browser but without a persistent user_data_dir for a fresh session
     browser_config = BrowserConfig(
         headless=False,
-        use_managed_browser=True,
-        user_data_dir=profile_path
+        use_managed_browser=True
     )
 
     async with AsyncWebCrawler(config=browser_config) as crawler:
+        # Step 1: Open browser for user to login
+        logger.info(f"\n{Fore.YELLOW}STEP 1: LOGIN{Style.RESET_ALL}", tag="SETUP")
+        logger.info("A browser window will open. Please navigate to the site and login.")
+        
+        # Navigate to a logical starting point (e.g., the first URL in config or a login page)
+        initial_url = "https://tailwindui.com/login"
+        await crawler.arun(initial_url)
+        
+        print(f"\n{Fore.GREEN}--> ACTION REQUIRED:{Style.RESET_ALL}")
+        print(f"1. Use the opened browser to log in to your account.")
+        print(f"2. Once you have logged in and reached the content, come back here.")
+        input(f"{Fore.CYAN}Press [ENTER] to start crawling all URLs from config...{Style.RESET_ALL}")
+
+        # Step 2: Proceed with crawling
+        logger.info(f"\n{Fore.YELLOW}STEP 2: CRAWLING{Style.RESET_ALL}", tag="CRAWL")
+        
         for group in config_data:
             group_name = group.get("name", "default")
             urls = group.get("urls", [])
             
-            logger.info(f"\nProcessing group: {Fore.YELLOW}{group_name}{Style.RESET_ALL}", tag="GROUP")
-            
-            # Create directory for this group
+            logger.info(f"Processing group: {Fore.YELLOW}{group_name}{Style.RESET_ALL}", tag="GROUP")
             group_dir = os.path.join("output", group_name)
             os.makedirs(group_dir, exist_ok=True)
             
             for url in urls:
                 await crawl_url(crawler, url, group_dir)
 
-async def main():
-    logger.info(f"{Fore.CYAN}LLM Context Crawler (Authenticated Markdown Generator){Style.RESET_ALL}", tag="DEMO")
-    
-    profiles = profiler.list_profiles()
-    
-    if not profiles:
-        logger.info("No profile found. Creating one. PLEASE LOGIN when the browser opens to the target site.", tag="SETUP")
-        profile_path = await profiler.create_profile()
-    else:
-        logger.info("Available profiles:", tag="SETUP")
-        for i, p in enumerate(profiles):
-            logger.info(f"[{i}] {p['name']}", tag="SETUP")
-        
-        choice = input(f"{Fore.CYAN}Choose profile [0]: {Style.RESET_ALL}") or "0"
-        profile_path = profiles[int(choice)]["path"]
-
-    config_path = input(f"{Fore.CYAN}Enter config JSON path [config.json]: {Style.RESET_ALL}") or "config.json"
-    
-    await process_config(profile_path, config_path)
+    logger.success("\nAll tasks completed!", tag="FINISH")
 
 if __name__ == "__main__":
     try:
